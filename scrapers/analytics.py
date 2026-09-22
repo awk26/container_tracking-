@@ -52,6 +52,51 @@ LINE_CONFIGS = {
             "empty container returned",
         ],
     },
+    "sitc": {
+        "date_fields": ["Date"],
+        "time_fields": [],
+        "location_fields": ["Location"],
+        "event_fields": ["Description"],
+        "vessel_fields": ["Vessel / Voyage"],
+        "milestone_keywords": [
+            "gate-in",
+            "gate in",
+            "pickup",
+            "in cy",
+            "out cy",
+            "load",
+            "discharge",
+            "empty",
+        ],
+    },
+    "sci": {
+        "date_fields": ["Date"],
+        "time_fields": [],
+        "location_fields": ["Location"],
+        "event_fields": ["Description"],
+        "vessel_fields": ["Vessel"],
+        "milestone_keywords": [
+            "gate in empty",
+            "gate out full",
+            "gate in full",
+            "loaded full",
+            "discharge",
+            "gate out empty",
+        ],
+    },
+    "samudera": {
+        "date_fields": ["Date"],
+        "time_fields": [],
+        "location_fields": ["Location"],
+        "event_fields": ["Description"],
+        "vessel_fields": ["Vessel / Voyage"],
+        "milestone_keywords": [
+            "departed port of load",
+            "transshipment",
+            "arrival at port of discharge",
+            "departure from port of discharge",
+        ],
+    },
 }
 
 DEFAULT_CONFIG = {

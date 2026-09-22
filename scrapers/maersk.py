@@ -1,4 +1,7 @@
 import os
+import platform
+import shutil
+import signal
 import subprocess
 import time
 import requests
@@ -11,8 +14,63 @@ from playwright.sync_api import sync_playwright
 
 # CONTAINER_NUMBER = "SLZU2577558"
 
-CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-DATA_DIR = r"C:\chrome_debug"
+def _find_chrome_path() -> str:
+    """Locates a real Chrome/Chromium install across OSes.
+
+    Set MAERSK_CHROME_PATH to override this entirely (e.g. a non-standard
+    install location on a server).
+    """
+
+    env_override = os.environ.get("MAERSK_CHROME_PATH")
+    if env_override:
+        return env_override
+
+    system = platform.system()
+
+    if system == "Windows":
+        candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+    elif system == "Darwin":
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ]
+    else:
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+        ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    # Not at any known path - try the PATH itself.
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    # Nothing found: fall back to the first candidate so the resulting
+    # error at least names a sensible path instead of a blank string.
+    return candidates[0]
+
+
+def _default_data_dir() -> str:
+    env_override = os.environ.get("MAERSK_CHROME_DATA_DIR")
+    if env_override:
+        return env_override
+    if platform.system() == "Windows":
+        return r"C:\chrome_debug"
+    return os.path.expanduser("~/.maersk_chrome_debug")
+
+
+CHROME_PATH = _find_chrome_path()
+DATA_DIR = _default_data_dir()
 
 TRACKING_URL = "https://www.maersk.com/tracking/"
 
@@ -21,6 +79,53 @@ EVENT_COLUMNS = [
     "location",
     "milestone",
 ]
+
+
+# ============================================================
+# VIRTUAL DISPLAY (Linux servers only)
+# ============================================================
+
+# Chrome here is launched non-headless on purpose (Maersk detects and
+# blocks headless mode - see ensure_chrome_running below), which means it
+# needs somewhere to render. On Windows/macOS desktops that's just the
+# real display. On a Linux server with no X server, there's normally
+# nothing to render into at all - so start a throwaway virtual one
+# (Xvfb) automatically instead of requiring that to be set up by hand
+# for every deployment.
+
+_xvfb_process = None
+
+
+def _ensure_display():
+    if platform.system() == "Windows":
+        return
+
+    if os.environ.get("DISPLAY"):
+        return  # a real or already-started virtual display exists
+
+    global _xvfb_process
+    if _xvfb_process is not None and _xvfb_process.poll() is None:
+        return  # already started earlier in this process
+
+    xvfb_path = shutil.which("Xvfb")
+    if not xvfb_path:
+        print(
+            "[WARN] No DISPLAY is set and Xvfb isn't installed - Chrome will "
+            "likely fail to launch. Install it, e.g. on RHEL/Fedora: "
+            "sudo dnf install -y xorg-x11-server-Xvfb"
+        )
+        return
+
+    display_num = os.environ.get("MAERSK_XVFB_DISPLAY", ":99")
+    print(f"[INFO] No DISPLAY set - starting a virtual display on {display_num}...")
+
+    _xvfb_process = subprocess.Popen(
+        [xvfb_path, display_num, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1)  # give it a moment to bind before Chrome tries to use it
+    os.environ["DISPLAY"] = display_num
 
 
 # ============================================================
@@ -56,6 +161,8 @@ def ensure_chrome_running():
     except Exception:
         print("[INFO] Remote Chrome not detected. Launching Chrome...")
 
+    _ensure_display()
+
     # Ensure profile directory exists
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -67,14 +174,23 @@ def ensure_chrome_running():
     # So headless isn't just slower here, it's detected and given a
     # degraded response. Launched minimized instead so it doesn't grab
     # focus or sit in the way, without pretending to be headless.
-    chrome_process = subprocess.Popen([
-        CHROME_PATH,
-        "--remote-debugging-port=9222",
-        f"--user-data-dir={DATA_DIR}",
-        "--start-minimized",
-        "--no-first-run",
-        "--no-default-browser-check",
-    ])
+    # start_new_session makes Chrome (and the child renderer/GPU processes
+    # it spawns) its own process group on Linux/macOS, so close_chrome can
+    # reliably kill the whole tree with os.killpg instead of just the one
+    # PID we happen to hold a handle to.
+    popen_kwargs = {} if platform.system() == "Windows" else {"start_new_session": True}
+
+    chrome_process = subprocess.Popen(
+        [
+            CHROME_PATH,
+            "--remote-debugging-port=9222",
+            f"--user-data-dir={DATA_DIR}",
+            "--start-minimized",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ],
+        **popen_kwargs,
+    )
 
     # Wait for debugging interface
     for _ in range(10):
@@ -117,18 +233,39 @@ def close_chrome(chrome_process):
 
     print("\n[INFO] Closing the Chrome process this script launched...")
 
-    subprocess.run(
-        [
-            "taskkill",
-            "/F",
-            "/T",
-            "/PID",
-            str(chrome_process.pid)
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False
-    )
+    if platform.system() == "Windows":
+        subprocess.run(
+            [
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(chrome_process.pid)
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False
+        )
+    else:
+        # Kill the whole process group (Chrome + its renderer/GPU/etc.
+        # children), not just the one PID we have a handle to - otherwise
+        # those children are silently left running. Relies on
+        # start_new_session=True having been passed at launch.
+        try:
+            pgid = os.getpgid(chrome_process.pid)
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # already exited
+        except Exception:
+            try:
+                chrome_process.kill()
+            except Exception:
+                pass
+
+        try:
+            chrome_process.wait(timeout=5)
+        except Exception:
+            pass
 
     print("[INFO] Chrome closed successfully.")
 

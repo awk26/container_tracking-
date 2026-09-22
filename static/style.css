@@ -98,6 +98,52 @@ h1 {
   .track-form label, .track-form select, .track-form input, .track-form button { grid-row: auto; }
 }
 
+.samudera-fields {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.samudera-fields[hidden] {
+  display: none;
+}
+
+.samudera-fields .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  flex: 1;
+}
+
+.samudera-fields .field[hidden] {
+  display: none;
+}
+
+.samudera-fields label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.samudera-fields select,
+.samudera-fields input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  background: var(--card-alt);
+  color: var(--text);
+}
+
+.samudera-fields select:focus,
+.samudera-fields input:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
 .status {
   margin-top: 20px;
   padding: 12px 14px;

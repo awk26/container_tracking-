@@ -21,10 +21,27 @@
         {% endfor %}
       </select>
 
-      <label for="container">Container number</label>
-      <input id="container" name="container" type="text" placeholder="e.g. HLXU1234561" autocomplete="off" required>
+      <label for="container" id="container-label">Container number</label>
+      <input id="container" name="container" type="text" placeholder="e.g. HLXU1234561" autocomplete="off">
+
+      <label for="samudera-search-type" id="search-type-label" hidden>Search type</label>
+      <select id="samudera-search-type" hidden>
+        <option value="bl_container">BL &amp; Container Number</option>
+        <option value="bl">BL Number</option>
+      </select>
 
       <button type="submit" id="submit-btn">Track</button>
+
+      <div id="samudera-fields" class="samudera-fields" hidden>
+        <div class="field">
+          <label for="bl-number">BL number</label>
+          <input id="bl-number" type="text" placeholder="e.g. SSLSGGTICAE5221" autocomplete="off">
+        </div>
+        <div class="field" id="samudera-container-field">
+          <label for="samudera-container">Container number</label>
+          <input id="samudera-container" type="text" placeholder="e.g. SIKU3035784" autocomplete="off">
+        </div>
+      </div>
     </form>
 
     <div id="status" class="status" hidden></div>

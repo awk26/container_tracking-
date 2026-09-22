@@ -4,10 +4,40 @@ const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
 const lineSelect = document.getElementById("line");
 const containerInput = document.getElementById("container");
+const containerLabel = document.getElementById("container-label");
+const searchTypeLabel = document.getElementById("search-type-label");
+const samuderaSearchType = document.getElementById("samudera-search-type");
+const samuderaFields = document.getElementById("samudera-fields");
+const samuderaContainerField = document.getElementById("samudera-container-field");
+const blNumberInput = document.getElementById("bl-number");
+const samuderaContainerInput = document.getElementById("samudera-container");
+
+// Samudera's public tool is BL-driven, not container-number-driven like
+// every other line: selecting it swaps the generic container-number field
+// for a search-type picker, and the BL/container fields underneath only
+// show what that search type actually needs.
+function updateSamuderaFields() {
+  const isSamudera = lineSelect.value === "samudera";
+
+  containerLabel.hidden = isSamudera;
+  containerInput.hidden = isSamudera;
+
+  searchTypeLabel.hidden = !isSamudera;
+  samuderaSearchType.hidden = !isSamudera;
+  samuderaFields.hidden = !isSamudera;
+
+  const isBlOnly = isSamudera && samuderaSearchType.value === "bl";
+  samuderaContainerField.hidden = isBlOnly;
+}
 
 lineSelect.addEventListener("change", () => {
   containerInput.value = "";
+  blNumberInput.value = "";
+  samuderaContainerInput.value = "";
+  updateSamuderaFields();
 });
+samuderaSearchType.addEventListener("change", updateSamuderaFields);
+updateSamuderaFields();
 
 let activeMap = null;
 let activeCharts = [];
@@ -97,10 +127,16 @@ function initRouteMap(container, route) {
     L.marker([point.lat, point.lon], { icon }).addTo(map).bindPopup(popupHtml);
   });
 
-  if (latLngs.length === 1) {
-    map.setView(latLngs[0], 5);
+  // All events sharing (near enough) the same coordinate - e.g. a container
+  // that never left one port yet - gives fitBounds a zero-area box, which
+  // Leaflet zooms all the way in on (down to street level). Treat that the
+  // same as a single point: a fixed, sensible zoom instead.
+  const bounds = L.latLngBounds(latLngs);
+  const isEffectivelyOnePoint = bounds.getNorthEast().distanceTo(bounds.getSouthWest()) < 1000;
+  if (latLngs.length === 1 || isEffectivelyOnePoint) {
+    map.setView(latLngs[0], 11);
   } else {
-    map.fitBounds(latLngs, { padding: [30, 30] });
+    map.fitBounds(latLngs, { padding: [30, 30], maxZoom: 11 });
   }
 
   // The container was just attached to a page that may still be
@@ -481,11 +517,33 @@ form.addEventListener("submit", async (evt) => {
   clearResult();
 
   const line = document.getElementById("line").value;
-  const container = document.getElementById("container").value.trim();
 
-  if (!container) {
-    setStatus("Please enter a container number.", "error");
-    return;
+  let payload;
+  if (line === "samudera") {
+    const searchType = samuderaSearchType.value;
+    const blNumber = blNumberInput.value.trim();
+    const container = samuderaContainerInput.value.trim();
+
+    if (!blNumber) {
+      setStatus("Please enter a BL number.", "error");
+      return;
+    }
+    if (searchType === "bl_container" && !container) {
+      setStatus("Please enter a container number.", "error");
+      return;
+    }
+
+    payload = { line, search_type: searchType, bl_number: blNumber };
+    if (searchType === "bl_container") {
+      payload.container = container;
+    }
+  } else {
+    const container = containerInput.value.trim();
+    if (!container) {
+      setStatus("Please enter a container number.", "error");
+      return;
+    }
+    payload = { line, container };
   }
 
   submitBtn.disabled = true;
@@ -515,7 +573,7 @@ form.addEventListener("submit", async (evt) => {
     const resp = await fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line, container }),
+      body: JSON.stringify(payload),
     });
     data = await resp.json();
 
