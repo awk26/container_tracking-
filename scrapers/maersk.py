@@ -92,6 +92,15 @@ EVENT_COLUMNS = [
 # nothing to render into at all - so start a throwaway virtual one
 # (Xvfb) automatically instead of requiring that to be set up by hand
 # for every deployment.
+#
+# One gotcha this guards against: if the server process is started from an
+# SSH session with X11 forwarding on (e.g. `ssh -X`, or a client like
+# MobaXterm/PuTTY with X11 forwarding enabled), DISPLAY is already set to a
+# tunnel back to *that client machine's* X server - so Chrome would silently
+# render on whoever's laptop happened to start the process, and break the
+# moment that laptop disconnects or shuts down. Set MAERSK_FORCE_XVFB=1 in
+# the server's environment to always ignore any inherited DISPLAY and use a
+# local Xvfb display instead, regardless of how the process got launched.
 
 _xvfb_process = None
 
@@ -100,7 +109,10 @@ def _ensure_display():
     if platform.system() == "Windows":
         return
 
-    if os.environ.get("DISPLAY"):
+    force_xvfb = os.environ.get("MAERSK_FORCE_XVFB", "").strip().lower() in ("1", "true", "yes")
+    inherited_display = os.environ.get("DISPLAY")
+
+    if inherited_display and not force_xvfb:
         return  # a real or already-started virtual display exists
 
     global _xvfb_process
@@ -110,14 +122,21 @@ def _ensure_display():
     xvfb_path = shutil.which("Xvfb")
     if not xvfb_path:
         print(
-            "[WARN] No DISPLAY is set and Xvfb isn't installed - Chrome will "
+            "[WARN] No usable DISPLAY and Xvfb isn't installed - Chrome will "
             "likely fail to launch. Install it, e.g. on RHEL/Fedora: "
             "sudo dnf install -y xorg-x11-server-Xvfb"
         )
         return
 
     display_num = os.environ.get("MAERSK_XVFB_DISPLAY", ":99")
-    print(f"[INFO] No DISPLAY set - starting a virtual display on {display_num}...")
+    if force_xvfb and inherited_display:
+        print(
+            f"[INFO] MAERSK_FORCE_XVFB is set - ignoring inherited DISPLAY="
+            f"{inherited_display!r} (likely an SSH X11 forward) and starting "
+            f"a local virtual display on {display_num} instead..."
+        )
+    else:
+        print(f"[INFO] No DISPLAY set - starting a virtual display on {display_num}...")
 
     _xvfb_process = subprocess.Popen(
         [xvfb_path, display_num, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
