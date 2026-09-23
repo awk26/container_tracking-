@@ -11,6 +11,8 @@ the array rather than guessing further.
 
 from datetime import datetime
 
+import searoute as sr
+
 from . import geocode
 
 _LOCATION_FIELDS = ["Location", "Event Place"]
@@ -102,9 +104,27 @@ def parse_event_datetime(date_text, time_text=None):
     return None
 
 
+def _sea_path(coord_a, coord_b):
+    """Waypoints from coord_a to coord_b that follow sea lanes (via the
+    offline `searoute` package) instead of a straight line, so the route
+    drawn on the map doesn't cut across land. Falls back to a plain
+    two-point straight line if searoute can't route between them (e.g.
+    identical points, or an inland/unroutable coordinate) for any reason.
+    """
+    try:
+        geo_route = sr.searoute([coord_a[1], coord_a[0]], [coord_b[1], coord_b[0]])
+        coords = geo_route.geometry["coordinates"]
+        if len(coords) >= 2:
+            return [(lat, lon) for lon, lat in coords]
+    except Exception:
+        pass
+    return [coord_a, coord_b]
+
+
 def build_route(result):
-    """Returns {"points": [...], "current_index": int} or None if no event
-    in the result could be placed on a map."""
+    """Returns {"points": [...], "current_index": int, "path": [...]} or
+    None if no event in the result could be placed on a map. "path" is the
+    full sea-following line to draw between the points, in travel order."""
     events = result.get("events") or []
     if not events:
         return None
@@ -144,10 +164,50 @@ def build_route(result):
     if not points:
         return None
 
-    dated = [p for p in points if p["_sort_dt"] is not None]
-    current_index = points.index(max(dated, key=lambda p: p["_sort_dt"])) if dated else len(points) - 1
+    # Draw (and pick "current" from) points in actual travel order, not
+    # whatever order the carrier's raw event list happened to use. Events
+    # with no parseable date (e.g. "Information Not Available") can't be
+    # placed by their own timestamp - forward/backward-fill them from the
+    # nearest dated neighbor in the original order instead of collapsing
+    # them all to the very front (which would zigzag the route all over
+    # the map). Only if *no* event has a real date do we fall back to the
+    # original order outright.
+    sort_keys = [p["_sort_dt"] for p in points]
+    last_known = None
+    for i, dt in enumerate(sort_keys):
+        if dt is not None:
+            last_known = dt
+        elif last_known is not None:
+            sort_keys[i] = last_known
+    next_known = None
+    for i in range(len(sort_keys) - 1, -1, -1):
+        if sort_keys[i] is not None:
+            next_known = sort_keys[i]
+        elif next_known is not None:
+            sort_keys[i] = next_known
+
+    order = sorted(range(len(points)), key=lambda i: sort_keys[i] if sort_keys[i] is not None else i)
+    points = [points[i] for i in order]
+
+    dated_indices = [i for i in range(len(points)) if points[i]["_sort_dt"] is not None]
+    current_index = (
+        max(dated_indices, key=lambda i: points[i]["_sort_dt"]) if dated_indices else len(points) - 1
+    )
 
     for p in points:
         del p["_sort_dt"]
 
-    return {"points": points, "current_index": current_index}
+    path = []
+    for a, b in zip(points, points[1:]):
+        leg = _sea_path((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+        if path:
+            leg = leg[1:]  # don't duplicate the join point with the previous leg
+        path.extend(leg)
+    if not path:
+        path = [(points[0]["lat"], points[0]["lon"])]
+
+    return {
+        "points": points,
+        "current_index": current_index,
+        "path": [[lat, lon] for lat, lon in path],
+    }

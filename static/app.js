@@ -41,6 +41,7 @@ updateSamuderaFields();
 
 let activeMap = null;
 let activeCharts = [];
+let activeRouteAnimation = null;
 
 const CHART_PALETTE = {
   text: "#e7ebee",
@@ -79,6 +80,10 @@ function setStatus(message, kind) {
 function clearResult() {
   resultEl.hidden = true;
   resultEl.replaceChildren();
+  if (activeRouteAnimation) {
+    cancelAnimationFrame(activeRouteAnimation);
+    activeRouteAnimation = null;
+  }
   if (activeMap) {
     activeMap.remove();
     activeMap = null;
@@ -107,7 +112,33 @@ function initRouteMap(container, route) {
   }).addTo(map);
 
   const latLngs = points.map((p) => [p.lat, p.lon]);
-  L.polyline(latLngs, { color: CHART_PALETTE.brand, weight: 3, opacity: 0.9 }).addTo(map);
+  // route.path follows sea lanes between the points (computed server-side)
+  // instead of cutting a straight line across land; fall back to the plain
+  // point-to-point line if it's missing for some reason.
+  const pathLatLngs = route.path && route.path.length >= 2 ? route.path : latLngs;
+
+  // A thick dashed line whose dash-offset keeps shifting gives a "marching
+  // ants" flow effect along the path, showing the direction of travel
+  // without needing separate arrowhead markers.
+  const routeLine = L.polyline(pathLatLngs, {
+    color: CHART_PALETTE.brand,
+    weight: 5,
+    opacity: 0.9,
+    lineCap: "round",
+    dashArray: "1, 12",
+  }).addTo(map);
+
+  // Wrap on the dash pattern's own length (1 + 12 = 13) so the loop is
+  // seamless - any other modulus can cause a one-frame visual jump each
+  // time it wraps around.
+  const DASH_CYCLE = 13;
+  let dashOffset = 0;
+  const animateDashes = () => {
+    dashOffset = (dashOffset - 0.5 + DASH_CYCLE) % DASH_CYCLE;
+    routeLine.setStyle({ dashOffset: String(dashOffset) });
+    activeRouteAnimation = requestAnimationFrame(animateDashes);
+  };
+  animateDashes();
 
   points.forEach((point, i) => {
     const isCurrent = i === route.current_index;
@@ -136,7 +167,10 @@ function initRouteMap(container, route) {
   if (latLngs.length === 1 || isEffectivelyOnePoint) {
     map.setView(latLngs[0], 11);
   } else {
-    map.fitBounds(latLngs, { padding: [30, 30], maxZoom: 11 });
+    // Fit to the sea path, not just the ports themselves - a real shipping
+    // lane can bow well away from the straight line between two ports (e.g.
+    // around a coastline or south of an island).
+    map.fitBounds(pathLatLngs, { padding: [30, 30], maxZoom: 11 });
   }
 
   // The container was just attached to a page that may still be
