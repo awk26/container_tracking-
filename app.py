@@ -16,6 +16,46 @@ from scrapers.analytics import build_analytics
 
 app = Flask(__name__)
 
+# Security headers (same VAPT-hardening pattern as the bjk-sports project):
+# a strict Content-Security-Policy plus the usual companion headers. No
+# nonce machinery is needed here, unlike bjk-sports - this app has zero
+# inline <script> tags (app.js is only ever loaded via <script src>), so
+# script-src can stay locked to 'self' plus the two CDNs it actually uses.
+# style-src needs 'unsafe-inline' because Leaflet's popups and internal
+# styling set style="..." attributes directly; that's a much lower-risk
+# allowance than inline script would be.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "frame-ancestors 'self'; form-action 'self'; object-src 'none'; base-uri 'self';"
+)
+
+
+@app.after_request
+def set_security_headers(resp):
+    resp.headers["Content-Security-Policy"] = _CSP
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.path == "/api/track":
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.errorhandler(404)
+def not_found(_e):
+    return jsonify({"error": "Not found."}), 404
+
+
+@app.errorhandler(500)
+def server_error(_e):
+    return jsonify({"error": "Internal server error."}), 500
+
+
 LINES = {
     "hapag": "Hapag-Lloyd",
     "ldb": "LDB (India Container Tracking)",
