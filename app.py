@@ -17,17 +17,19 @@ from scrapers.analytics import build_analytics
 app = Flask(__name__)
 
 # Security headers (same VAPT-hardening pattern as the bjk-sports project):
-# a strict Content-Security-Policy plus the usual companion headers. No
-# nonce machinery is needed here, unlike bjk-sports - this app has zero
-# inline <script> tags (app.js is only ever loaded via <script src>), so
-# script-src can stay locked to 'self' plus the two CDNs it actually uses.
-# style-src needs 'unsafe-inline' because Leaflet's popups and internal
-# styling set style="..." attributes directly; that's a much lower-risk
-# allowance than inline script would be.
+# a strict Content-Security-Policy plus the usual companion headers.
+#
+# Leaflet and Chart.js are vendored locally under static/vendor/ (see
+# static/download_vendor_assets.sh) rather than loaded from unpkg/jsdelivr
+# at runtime, so script-src/style-src can stay locked to 'self' with no
+# third-party hosts and no per-request nonce machinery: this app has zero
+# inline <script> tags, and the one place that used to need inline style
+# (the Leaflet popup markup in app.js) was moved to CSS classes instead of
+# reaching for 'unsafe-inline'.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "script-src 'self'; "
+    "style-src 'self'; "
     "img-src 'self' data: https://*.tile.openstreetmap.org; "
     "font-src 'self'; "
     "connect-src 'self'; "
@@ -169,4 +171,19 @@ def api_track():
 
 
 if __name__ == "__main__":
-    app.run(port=5005,host="0.0.0.0")
+    # NOTE: this is Werkzeug's development server - Flask's own docs say not
+    # to use it in production (no protection against slow clients, limited
+    # concurrency, verbose error pages if debug is ever turned on). The
+    # version_string patch below is a stopgap for the "Server" header leak;
+    # the real fix for a production deployment is running this through a
+    # real WSGI server instead, e.g.: `pip install waitress` then
+    # `waitress-serve --host=0.0.0.0 --port=5005 app:app`.
+    #
+    # Werkzeug's HTTP layer writes its own "Server: Werkzeug/x.x Python/x.x"
+    # header directly (not through Flask's response object), so a
+    # response-header override doesn't replace it - only patching the
+    # method that generates it does.
+    import werkzeug.serving
+    werkzeug.serving.WSGIRequestHandler.version_string = lambda self: "webserver"
+
+    app.run(port=5005, host="0.0.0.0")

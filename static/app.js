@@ -65,6 +65,16 @@ function el(tag, opts = {}, children = []) {
   return node;
 }
 
+// Everything rendered through el()'s `text` option goes in via textContent,
+// which is always safe. The Leaflet popup below is the one place that
+// builds raw HTML from scraped carrier data (Leaflet renders bindPopup's
+// argument as HTML), so anything carrier-sourced needs escaping here first.
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
 function setStatus(message, kind) {
   if (!message) {
     statusEl.hidden = true;
@@ -149,10 +159,10 @@ function initRouteMap(container, route) {
     });
     const popupHtml = `
       <div class="map-popup">
-        <div style="font-weight:600;">${point.event || "-"}${isCurrent ? " (current)" : ""}</div>
-        <div>${point.label || "-"}</div>
-        <div class="field-label" style="margin-top:4px;">${isCurrent ? "As of" : "Date"}</div>
-        <div>${point.date || "-"} ${point.time && point.time !== "-" ? point.time : ""}</div>
+        <div class="map-popup-event">${escapeHtml(point.event || "-")}${isCurrent ? " (current)" : ""}</div>
+        <div>${escapeHtml(point.label || "-")}</div>
+        <div class="field-label map-popup-when-label">${isCurrent ? "As of" : "Date"}</div>
+        <div>${escapeHtml(point.date || "-")} ${point.time && point.time !== "-" ? escapeHtml(point.time) : ""}</div>
       </div>
     `;
     L.marker([point.lat, point.lon], { icon }).addTo(map).bindPopup(popupHtml);

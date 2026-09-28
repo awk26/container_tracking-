@@ -292,6 +292,14 @@ table.events th {
   letter-spacing: 0.03em;
 }
 
+.map-popup-event {
+  font-weight: 600;
+}
+
+.map-popup-when-label {
+  margin-top: 4px;
+}
+
 /* Tabs (Milestones / Full table / Charts) */
 
 .tabs {
