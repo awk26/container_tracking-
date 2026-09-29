@@ -226,6 +226,112 @@ table.events th {
   color: var(--muted);
 }
 
+.card-links-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.export-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.export-status {
+  font-size: 13px;
+}
+
+.export-status.loading { color: var(--brand); }
+.export-status.error { color: var(--error-text); }
+
+.share-section {
+  margin-top: 10px;
+}
+
+.share-toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.share-toggle-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-alt);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-toggle-btn:hover {
+  border-color: var(--brand);
+}
+
+.share-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 700px;
+}
+
+.share-form[hidden] {
+  display: none;
+}
+
+.share-email-input {
+  flex: 1 1 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--card-alt);
+  color: var(--text);
+}
+
+.share-note-input {
+  flex: 1 1 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--card-alt);
+  color: var(--text);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 36px;
+}
+
+.share-send-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #071016;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-send-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.share-status {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
+.share-status.loading { color: var(--brand); }
+.share-status.ok { color: var(--ok); }
+.share-status.error { color: var(--error-text); }
+
 .route-timeline-row {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.4fr);

@@ -483,7 +483,148 @@ function queueChartRender(fn) {
   pendingChartRenders.push(fn);
 }
 
-function renderResult(data) {
+// Downloads a file from a same-origin fetch response (blob + a throwaway
+// <a download>), reading the real filename off Content-Disposition when
+// present.
+function downloadBlobResponse(resp, fallbackName) {
+  return resp.blob().then((blob) => {
+    const disposition = resp.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : fallbackName;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+}
+
+// Builds the "Download Excel" / "Download PDF" buttons. Like the share
+// form, these POST `searchPayload` (the original line/container inputs) to
+// /api/export/<fmt>, which re-fetches the tracking data itself rather than
+// exporting whatever the browser happens to be holding.
+function buildExportButtons(searchPayload) {
+  const wrap = el("div", { className: "export-buttons" });
+  const statusEl3 = el("span", { className: "export-status" });
+
+  [["xlsx", "Download Excel"], ["pdf", "Download PDF"]].forEach(([format, label]) => {
+    const btn = el("button", { className: "share-toggle-btn", text: label });
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      statusEl3.textContent = `Preparing ${format.toUpperCase()}…`;
+      statusEl3.className = "export-status loading";
+      try {
+        const resp = await fetch(`/api/export/${format}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(searchPayload),
+        });
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          statusEl3.textContent = body.error || "Couldn't generate that file.";
+          statusEl3.className = "export-status error";
+          return;
+        }
+        await downloadBlobResponse(resp, `tracking.${format}`);
+        statusEl3.textContent = "";
+        statusEl3.className = "export-status";
+      } catch (err) {
+        statusEl3.textContent = "Network error — couldn't reach the server.";
+        statusEl3.className = "export-status error";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    wrap.appendChild(btn);
+  });
+
+  wrap.appendChild(statusEl3);
+  return wrap;
+}
+
+// Builds the collapsed-by-default "Share via email" widget: a toggle
+// button that reveals an email + optional-note form, POSTing to
+// /api/share. That endpoint re-fetches the tracking data itself from
+// `searchPayload` rather than trusting anything from `data` - this form
+// only ever supplies the recipient and note.
+function buildShareSection(searchPayload) {
+  const wrap = el("div", { className: "share-section" });
+  const toggleBtn = el("button", { className: "share-toggle-btn", text: "Share via email" });
+  toggleBtn.type = "button";
+
+  const form = el("div", { className: "share-form" });
+  form.hidden = true;
+
+  const emailInput = el("input");
+  emailInput.type = "email";
+  emailInput.placeholder = "customer@example.com";
+  emailInput.className = "share-email-input";
+  emailInput.autocomplete = "off";
+
+  const noteInput = el("textarea");
+  noteInput.placeholder = "Optional note to include…";
+  noteInput.className = "share-note-input";
+  noteInput.rows = 2;
+
+  const sendBtn = el("button", { className: "share-send-btn", text: "Send" });
+  sendBtn.type = "button";
+
+  const statusEl2 = el("div", { className: "share-status" });
+
+  form.appendChild(emailInput);
+  form.appendChild(noteInput);
+  form.appendChild(sendBtn);
+  form.appendChild(statusEl2);
+
+  toggleBtn.addEventListener("click", () => {
+    form.hidden = !form.hidden;
+    if (!form.hidden) emailInput.focus();
+  });
+
+  sendBtn.addEventListener("click", async () => {
+    const to_email = emailInput.value.trim();
+    if (!to_email) {
+      statusEl2.textContent = "Please enter an email address.";
+      statusEl2.className = "share-status error";
+      return;
+    }
+
+    sendBtn.disabled = true;
+    statusEl2.textContent = "Sending…";
+    statusEl2.className = "share-status loading";
+
+    try {
+      const resp = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...searchPayload, to_email, note: noteInput.value }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) {
+        statusEl2.textContent = body.error || "Couldn't send that email.";
+        statusEl2.className = "share-status error";
+      } else {
+        statusEl2.textContent = `Sent to ${to_email}.`;
+        statusEl2.className = "share-status ok";
+      }
+    } catch (err) {
+      statusEl2.textContent = "Network error — couldn't reach the server.";
+      statusEl2.className = "share-status error";
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+
+  wrap.appendChild(toggleBtn);
+  wrap.appendChild(form);
+  return wrap;
+}
+
+function renderResult(data, searchPayload) {
   const { events, event_columns, line_name, container_number, source_url } = data;
   const summary_fields = normalizeSummaryFields(data.summary_fields);
 
@@ -499,8 +640,9 @@ function renderResult(data) {
   });
   card.appendChild(grid);
 
+  const linksRow = el("div", { className: "card-links-row" });
   if (source_url) {
-    card.appendChild(
+    linksRow.appendChild(
       el("a", {
         className: "source-link",
         href: source_url,
@@ -510,6 +652,9 @@ function renderResult(data) {
       })
     );
   }
+  card.appendChild(linksRow);
+  card.appendChild(buildExportButtons(searchPayload));
+  card.appendChild(buildShareSection(searchPayload));
 
   resultEl.appendChild(card);
 
@@ -637,7 +782,7 @@ form.addEventListener("submit", async (evt) => {
   // doesn't match the expected shape should say so, not claim the network failed.
   try {
     setStatus(null);
-    renderResult(data);
+    renderResult(data, payload);
   } catch (err) {
     console.error("Could not render tracking result:", err, data);
     setStatus(`Got a response but couldn't display it: ${err.message}`, "error");

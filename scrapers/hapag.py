@@ -58,7 +58,7 @@ def track_container(raw_container_number: str) -> dict:
     container_number = normalize(raw_container_number)
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         try:
             page = browser.new_page(user_agent=USER_AGENT)
             page.goto(TRACKING_URL, wait_until="domcontentloaded", timeout=30000)
