@@ -28,7 +28,11 @@ from html import escape as _esc
 
 from dotenv import load_dotenv
 
+from exporter import build_xlsx_bytes
+
 load_dotenv()
+
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
 class EmailConfigError(Exception):
@@ -187,6 +191,21 @@ def send_tracking_email(to_email: str, result: dict, note: str = "") -> None:
     msg["To"] = to_email
     msg.set_content(_format_body(result, note))
     msg.add_alternative(_format_html_body(result, note), subtype="html")
+
+    # Attach the same Excel workbook the "Download Excel" button produces,
+    # so the recipient gets the tables as a real file too, not just the
+    # inline HTML tables above.
+    safe_name = _SAFE_NAME_RE.sub("_", str(result.get("container_number") or "tracking"))[:40]
+    try:
+        xlsx_bytes = build_xlsx_bytes(result)
+        msg.add_attachment(
+            xlsx_bytes,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"{safe_name}.xlsx",
+        )
+    except Exception as exc:
+        raise EmailSendError(f"Couldn't build the Excel attachment: {exc}") from exc
 
     try:
         with smtplib.SMTP(host, port, timeout=20) as server:

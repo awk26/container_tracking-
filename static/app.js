@@ -35,6 +35,11 @@ lineSelect.addEventListener("change", () => {
   blNumberInput.value = "";
   samuderaContainerInput.value = "";
   updateSamuderaFields();
+  // Switching lines makes the previous result (and any leftover
+  // status message) stale - don't leave another line's tracking data
+  // on screen while a different line is selected.
+  clearResult();
+  setStatus(null);
 });
 samuderaSearchType.addEventListener("change", updateSamuderaFields);
 updateSamuderaFields();
