@@ -5,7 +5,6 @@ from flask import Flask, jsonify, render_template, request, Response
 from scrapers.container_number import is_valid_container_number, normalize
 from scrapers.errors import ContainerNotFoundError, InvalidContainerNumberError
 from scrapers.evergreen import track_container as track_evergreen
-from scrapers.hapag import track_container as track_hapag
 from scrapers.ldb import track_container as track_ldb
 from scrapers.msc import track_container as track_msc
 from scrapers.pil import track_container as track_pil
@@ -63,7 +62,6 @@ def server_error(_e):
 
 
 LINES = {
-    "hapag": "Hapag-Lloyd",
     "ldb": "LDB (India Container Tracking)",
     "evergreen": "Evergreen",
     "pil": "PIL (Pacific International Lines)",
@@ -75,7 +73,6 @@ LINES = {
 }
 
 TRACKERS = {
-    "hapag": track_hapag,
     "ldb": track_ldb,
     "evergreen": track_evergreen,
     "pil": track_pil,

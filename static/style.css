@@ -406,6 +406,59 @@ table.events th {
   margin-top: 4px;
 }
 
+/* Map legend (shown only when the route mixes sea and road moves) */
+.map-legend {
+  background: rgba(23, 29, 34, 0.92);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.map-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.map-legend-swatch {
+  display: inline-block;
+  width: 28px;
+  height: 0;
+}
+
+.map-legend-swatch.sea { border-top: 4px dotted var(--brand); }
+.map-legend-swatch.road { border-top: 3px dashed #ffb84d; }
+
+/* Wide event tables stay beside the map: they scroll inside their own card
+   (both ways, header pinned) instead of stretching the page. */
+.route-timeline-row > .card {
+  min-width: 0;
+}
+
+.table-scroll {
+  overflow: auto;
+  max-height: 470px;
+}
+
+.table-scroll table.events {
+  margin-top: 0;
+}
+
+.table-scroll table.events th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+
+table.events.wide th,
+table.events.wide td {
+  white-space: nowrap;
+}
+
+
 /* Tabs (Milestones / Full table / Charts) */
 
 .tabs {

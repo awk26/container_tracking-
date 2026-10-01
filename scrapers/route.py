@@ -121,16 +121,26 @@ def _sea_path(coord_a, coord_b):
     return [coord_a, coord_b]
 
 
+def _is_road_leg(a, b):
+    """A leg is a road move if either end is a known non-vessel move (e.g.
+    TRUCK). Carriers that don't report a mode per event (mode None) keep the
+    old behaviour: every leg is treated as a sea leg."""
+    return any(p.get("mode") and p["mode"] != "VESSEL" for p in (a, b))
+
+
 def build_route(result):
-    """Returns {"points": [...], "current_index": int, "path": [...]} or
-    None if no event in the result could be placed on a map. "path" is the
-    full sea-following line to draw between the points, in travel order."""
+    """Returns {"points": [...], "current_index": int, "path": [...],
+    "legs": [...]} or None if no event in the result could be placed on a
+    map. "path" is the whole line in travel order; "legs" is the same line
+    split per move, each {"mode": "sea"|"road", "path": [...]}, so the map
+    can draw vessel legs along sea lanes and truck legs as plain road hops."""
     events = result.get("events") or []
     if not events:
         return None
 
     columns = result.get("event_columns") or []
     provided_coords = result.get("event_coords")
+    provided_modes = result.get("event_modes")
 
     points = []
     for i, row in enumerate(events):
@@ -141,7 +151,11 @@ def build_route(result):
                 coord = (lat, lon)
 
         location_text = get_field(row, columns, _LOCATION_FIELDS)
-        if coord is None:
+        # A carrier that supplies its own coordinates can switch off the
+        # place-name guess: an event without coordinates is then simply left
+        # off the map, rather than pinned to a city centre that is wrong for
+        # a specific terminal or depot.
+        if coord is None and result.get("geocode_fallback", True):
             coord = geocode.find_coords(location_text)
         if coord is None:
             continue
@@ -151,6 +165,8 @@ def build_route(result):
         event_text = get_field(row, columns, _EVENT_FIELDS)
         dt = parse_event_datetime(date_text, time_text)
 
+        mode = provided_modes[i] if provided_modes and i < len(provided_modes) else None
+
         points.append({
             "lat": coord[0],
             "lon": coord[1],
@@ -158,6 +174,7 @@ def build_route(result):
             "event": event_text or "-",
             "date": date_text or "-",
             "time": time_text or "-",
+            "mode": mode,
             "_sort_dt": dt,
         })
 
@@ -198,8 +215,21 @@ def build_route(result):
         del p["_sort_dt"]
 
     path = []
+    legs = []
     for a, b in zip(points, points[1:]):
-        leg = _sea_path((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+        start, end = (a["lat"], a["lon"]), (b["lat"], b["lon"])
+
+        # Same place (e.g. PORT IN then PORT OUT at one terminal): nothing moved.
+        if abs(start[0] - end[0]) < 1e-5 and abs(start[1] - end[1]) < 1e-5:
+            continue
+
+        if _is_road_leg(a, b):
+            leg, mode = [start, end], "road"
+        else:
+            leg, mode = _sea_path(start, end), "sea"
+
+        legs.append({"mode": mode, "path": [[lat, lon] for lat, lon in leg]})
+
         if path:
             leg = leg[1:]  # don't duplicate the join point with the previous leg
         path.extend(leg)
@@ -210,4 +240,5 @@ def build_route(result):
         "points": points,
         "current_index": current_index,
         "path": [[lat, lon] for lat, lon in path],
+        "legs": legs,
     }

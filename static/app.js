@@ -132,28 +132,50 @@ function initRouteMap(container, route) {
   // point-to-point line if it's missing for some reason.
   const pathLatLngs = route.path && route.path.length >= 2 ? route.path : latLngs;
 
-  // A thick dashed line whose dash-offset keeps shifting gives a "marching
-  // ants" flow effect along the path, showing the direction of travel
-  // without needing separate arrowhead markers.
-  const routeLine = L.polyline(pathLatLngs, {
-    color: CHART_PALETTE.brand,
-    weight: 5,
-    opacity: 0.9,
-    lineCap: "round",
-    dashArray: "1, 12",
-  }).addTo(map);
+  // Each leg is drawn in the style of how it moved. Sea legs follow shipping
+  // lanes (blue dots). Road legs (truck moves, e.g. LDB's terminal/CFS hops)
+  // are plain amber dashes between the two stops - there's no road-routing
+  // data here to follow real roads. A dash offset that keeps shifting gives
+  // the "marching ants" flow effect showing the direction of travel.
+  // `cycle` is each dash pattern's own length (dash + gap), so the loop wraps
+  // seamlessly instead of jumping once per revolution.
+  const LEG_STYLES = {
+    sea: { color: CHART_PALETTE.brand, weight: 5, opacity: 0.9, lineCap: "round", dashArray: "1, 12", cycle: 13 },
+    road: { color: CHART_PALETTE.amber, weight: 4, opacity: 0.9, lineCap: "round", dashArray: "8, 8", cycle: 16 },
+  };
 
-  // Wrap on the dash pattern's own length (1 + 12 = 13) so the loop is
-  // seamless - any other modulus can cause a one-frame visual jump each
-  // time it wraps around.
-  const DASH_CYCLE = 13;
-  let dashOffset = 0;
+  const legs = route.legs && route.legs.length ? route.legs : [{ mode: "sea", path: pathLatLngs }];
+
+  const animatedLines = legs.map((leg) => {
+    const { cycle, ...lineOptions } = LEG_STYLES[leg.mode] || LEG_STYLES.sea;
+    return { line: L.polyline(leg.path, lineOptions).addTo(map), cycle };
+  });
+
+  let elapsed = 0;
   const animateDashes = () => {
-    dashOffset = (dashOffset - 0.5 + DASH_CYCLE) % DASH_CYCLE;
-    routeLine.setStyle({ dashOffset: String(dashOffset) });
+    elapsed += 0.5;
+    animatedLines.forEach(({ line, cycle }) => {
+      line.setStyle({ dashOffset: String((cycle - (elapsed % cycle)) % cycle) });
+    });
     activeRouteAnimation = requestAnimationFrame(animateDashes);
   };
   animateDashes();
+
+  // Only worth a legend when the route mixes in road moves.
+  if (legs.some((leg) => leg.mode === "road")) {
+    const legend = L.control({ position: "bottomleft" });
+    legend.onAdd = () => {
+      const box = L.DomUtil.create("div", "map-legend");
+      [["sea", "Sea route"], ["road", "Road (truck) move"]].forEach(([mode, label]) => {
+        if (!legs.some((leg) => leg.mode === mode)) return;
+        const row = L.DomUtil.create("div", "map-legend-row", box);
+        L.DomUtil.create("span", `map-legend-swatch ${mode}`, row);
+        L.DomUtil.create("span", "", row).textContent = label;
+      });
+      return box;
+    };
+    legend.addTo(map);
+  }
 
   points.forEach((point, i) => {
     const isCurrent = i === route.current_index;
@@ -185,7 +207,7 @@ function initRouteMap(container, route) {
     // Fit to the sea path, not just the ports themselves - a real shipping
     // lane can bow well away from the straight line between two ports (e.g.
     // around a coastline or south of an island).
-    map.fitBounds(pathLatLngs, { padding: [30, 30], maxZoom: 11 });
+    map.fitBounds(pathLatLngs, { padding: [30, 30], maxZoom: 13 });
   }
 
   // The container was just attached to a page that may still be
@@ -278,7 +300,10 @@ function buildMilestonesPanel(milestones) {
 }
 
 function buildFullTablePanel(events, event_columns) {
-  const table = el("table", { className: "events" });
+  // Many-column tables (e.g. LDB's) stay on one line per row and scroll
+  // sideways rather than squeezing every cell into a narrow wrapped column.
+  const wide = (event_columns || []).length > 8;
+  const table = el("table", { className: wide ? "events wide" : "events" });
   const thead = el("thead");
   const headRow = el("tr");
   (event_columns || []).forEach((h) => headRow.appendChild(el("th", { text: h })));
@@ -293,7 +318,7 @@ function buildFullTablePanel(events, event_columns) {
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  return table;
+  return el("div", { className: "table-scroll" }, [table]);
 }
 
 // Turns leg_durations (from-event -> to-event, days) into cumulative
@@ -679,8 +704,11 @@ function renderResult(data, searchPayload) {
     timelineCard.appendChild(el("h2", { text: "Event timeline" }));
 
     const analytics = data.analytics || {};
+    // LDB's table is the point of its result (truck numbers, terminals,
+    // expected next event, ...), so it leads instead of the milestone list.
+    const isLdb = data.line === "ldb";
     const tabs = [
-      { label: "Milestones", build: () => buildMilestonesPanel(analytics.milestones) },
+      ...(isLdb ? [] : [{ label: "Milestones", build: () => buildMilestonesPanel(analytics.milestones) }]),
       { label: "Events", build: () => buildFullTablePanel(events, event_columns) },
       { label: "Charts", build: () => buildChartsPanel(analytics) },
     ];

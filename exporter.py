@@ -12,8 +12,8 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
@@ -76,8 +76,20 @@ def build_xlsx_bytes(result) -> bytes:
 
 
 def build_pdf_bytes(result) -> bytes:
+    columns, rows = _event_rows(result)
+
+    # Many-column tables (e.g. LDB's 15) don't fit portrait A4: go landscape
+    # with tighter margins and a smaller font.
+    wide = len(columns) > 8
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4) if wide else A4,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+        leftMargin=1 * cm if wide else 2 * cm,
+        rightMargin=1 * cm if wide else 2 * cm,
+    )
     styles = getSampleStyleSheet()
     story = []
 
@@ -101,15 +113,17 @@ def build_pdf_bytes(result) -> bytes:
         story.append(t)
         story.append(Spacer(1, 16))
 
-    columns, rows = _event_rows(result)
     if columns and rows:
         story.append(Paragraph("Events", styles["Heading2"]))
-        cell_style = styles["BodyText"]
-        cell_style.fontSize = 8
-        wrapped = [[Paragraph(xml_escape(str(c)), cell_style) for c in columns]]
+        font_size = 6.5 if wide else 8
+        cell_style = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=font_size, leading=font_size + 2)
+        # Paragraph cells ignore the table's TEXTCOLOR, so the header needs
+        # its own white style to be readable on the dark header fill.
+        head_style = ParagraphStyle("head", parent=cell_style, textColor=colors.white, fontName="Helvetica-Bold")
+        wrapped = [[Paragraph(xml_escape(str(c)), head_style) for c in columns]]
         for row in rows:
             wrapped.append([Paragraph(xml_escape(str(v)) if v else "-", cell_style) for v in row])
-        col_width = 480 / max(len(columns), 1)
+        col_width = doc.width / max(len(columns), 1)
         t2 = Table(wrapped, colWidths=[col_width] * len(columns), repeatRows=1)
         t2.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(f"#{_HEADER_FILL}")),
