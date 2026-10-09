@@ -4,14 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Container Tracking</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=3">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet.css') }}">
 </head>
 <body>
-  <main class="page">
-    <h1>Container Tracking</h1>
-    <p class="subtitle">Track a container directly from the carrier's own tracking system.</p>
 
+  <header class="site-header">
+    <div class="logo-plate">
+      <img src="{{ url_for('static', filename='vendor/images/ulss-logo.png') }}" alt="JM Baxi Marine Services">
+    </div>
+    <div class="site-titles">
+      <h1>Container Tracking</h1>
+      <p class="subtitle">Track a container directly from the carrier's own tracking system.</p>
+    </div>
+  </header>
+
+  <main class="page">
     <form id="track-form" class="track-form">
       <label for="line">Shipping line</label>
       <select id="line" name="line" required>
