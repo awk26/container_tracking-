@@ -1,4 +1,4 @@
-"""Best-effort lookup from a free-text port/terminal name to (lat, lon).
+"""Lookup from a free-text port/terminal name to (lat, lon).
 
 Carrier tracking pages describe locations in free text ("Shanghai · Yangshan
 Terminal", "SHANGHAI, CHINA", "Nhava Sheva CFS"), not coordinates. LDB's raw
@@ -6,12 +6,33 @@ API is the one exception (it returns exact lat/lon per event), so callers
 should prefer any coordinates already present on the event and only fall
 back to this lookup when none are available.
 
-This only covers major container ports, so a miss is expected and normal —
-callers should treat "no match" as "skip this point on the map", not an
-error.
+Resolution order for a name:
+  1. the small built-in PORT_COORDS table (major ports; instant, unambiguous)
+  2. the on-disk cache (data/geocode_cache.json) - remembers hits *and* misses
+  3. OpenStreetMap Nominatim, so any other port in the world resolves
+     dynamically (and is then cached)
+
+A miss is normal - callers treat "no match" as "skip this point on the map".
 """
 
+import json
+import os
 import re
+import threading
+import time
+
+import requests
+
+CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "geocode_cache.json")
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+# Nominatim's usage policy requires an identifying User-Agent and <= 1 request/second.
+_HEADERS = {"User-Agent": "container-tracking-app/1.0 (port geocoding)"}
+_MIN_INTERVAL = 1.1
+_MAX_QUERIES_PER_LOOKUP = 4
+
+_lock = threading.Lock()
+_cache = None
+_last_request = 0.0
 
 # (lat, lon) for major container ports. Keys are matched case-insensitively
 # as whole words/phrases against free-text location strings.
@@ -180,11 +201,102 @@ _PATTERN = re.compile(
 )
 
 
+def _load_cache():
+    global _cache
+    if _cache is None:
+        try:
+            with open(CACHE_PATH, encoding="utf-8") as fh:
+                _cache = json.load(fh)
+        except (OSError, ValueError):
+            _cache = {}
+    return _cache
+
+
+def _save_cache():
+    try:
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        tmp = CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_cache, fh, ensure_ascii=False, indent=0)
+        os.replace(tmp, CACHE_PATH)
+    except OSError:
+        pass  # cache is only an optimisation
+
+
+def _candidates(text):
+    """Search phrases to try, most specific first: the cleaned text, then each
+    piece split on , / · - ( ) (terminal/CFS words dropped)."""
+    text = re.sub(r"(container|terminals?|cfs|icd|depot|yard|gate|port of)", " ", text, flags=re.I)
+    pieces = [p.strip(" .") for p in re.split(r"[,/·()|;\-]", text)]
+    pieces = [re.sub(r"\s+", " ", p) for p in pieces if len(p.strip()) > 2]
+    seen, out = set(), []
+    for p in [re.sub(r"\s+", " ", re.sub(r"[,/·()|;]", " ", text)).strip()] + pieces:
+        if p and p.lower() not in seen:
+            seen.add(p.lower())
+            out.append(p)
+    return out
+
+
+def _nominatim(query, port_only=False):
+    """(lat, lon) for one query or None. With port_only, only harbour/port
+    style hits count (so "Santos port" can't resolve to a town called Santos)."""
+    global _last_request
+    wait = _MIN_INTERVAL - (time.monotonic() - _last_request)
+    if wait > 0:
+        time.sleep(wait)
+    _last_request = time.monotonic()
+    resp = requests.get(
+        NOMINATIM_URL,
+        params={"q": query, "format": "jsonv2", "limit": 5},
+        headers=_HEADERS,
+        timeout=6,
+    )
+    resp.raise_for_status()
+    results = resp.json()
+    if not results:
+        return None
+    portish = [r for r in results if r.get("category") in ("harbour", "landuse", "industrial") or "port" in (r.get("type") or "")]
+    if port_only and not portish:
+        return None
+    best = (portish or results)[0]
+    return round(float(best["lat"]), 5), round(float(best["lon"]), 5)
+
+
+def _dynamic_lookup(location_text):
+    key = " ".join(location_text.lower().split())
+    cache = _load_cache()
+    if key in cache:
+        hit = cache[key]
+        return tuple(hit) if hit else None
+
+    found = None
+    network_ok = True
+    for phrase in _candidates(location_text)[:_MAX_QUERIES_PER_LOOKUP]:
+        try:
+            found = _nominatim(phrase + " port", port_only=True) or _nominatim(phrase)
+        except (requests.RequestException, ValueError, KeyError):
+            network_ok = False
+            break
+        if found:
+            break
+
+    if network_ok:  # don't remember a miss caused by being offline
+        cache[key] = list(found) if found else None
+        _save_cache()
+    return found
+
+
 def find_coords(location_text):
-    """Return (lat, lon) for the first known port named in location_text, or None."""
+    """Return (lat, lon) for the port named in location_text, or None."""
     if not location_text:
         return None
+    location_text = str(location_text)
+
+    # Known major ports resolve instantly and unambiguously from the table;
+    # everything else is looked up dynamically.
     match = _PATTERN.search(location_text)
-    if not match:
-        return None
-    return PORT_COORDS[match.group(1).lower()]
+    if match:
+        return PORT_COORDS[match.group(1).lower()]
+
+    with _lock:
+        return _dynamic_lookup(location_text)

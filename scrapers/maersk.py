@@ -7,6 +7,8 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
+from .errors import ContainerNotFoundError
+
 
 # ============================================================
 # CONFIGURATION
@@ -319,6 +321,8 @@ def process_active_chrome_tab(container_number: str = None) -> dict:
 
 def _track_container(container_number: str = None) -> dict:
 
+    requested_container_number = (container_number or '').strip()
+
     with sync_playwright() as p:
 
         # Connect to Chrome
@@ -408,28 +412,112 @@ def _track_container(container_number: str = None) -> dict:
         )
 
         # --------------------------------------------------------
-        # Wait for Tracking Result
+        # Wait for Tracking Result (defensive selector detection)
         # --------------------------------------------------------
 
-        if previous_details_text:
+        # Maersk may navigate to /tracking/<container_number> and its
+        # result markup can change. Do not wait only for the legacy
+        # div[data-test="container"] selector.
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+
+        try:
+            page.wait_for_timeout(5000)
+        except Exception:
+            pass
+
+        result_container = None
+        result_selector = None
+
+        result_selectors = [
+            'div[data-test="container"]',
+            '[data-test="container-details"]',
+            '[data-test^="transport-plan-item-"]',
+            '[data-testid*="container"]',
+            '[data-testid*="tracking"]',
+        ]
+
+        # Check known selectors. The first selector is the original
+        # selector used by this scraper; others are diagnostic fallbacks.
+        for selector in result_selectors:
             try:
-                page.wait_for_function(
-                    """([selector, oldText]) => {
-                        const el = document.querySelector(selector);
-                        return !!el && el.innerText.trim() !== oldText;
-                    }""",
-                    arg=['[data-test="container-details"]', previous_details_text],
-                    timeout=15000,
-                )
+                candidate = page.locator(selector).first
+                candidate.wait_for(state="visible", timeout=3000)
+                if candidate.is_visible():
+                    result_container = candidate
+                    result_selector = selector
+                    print(f"[INFO] Tracking result found using selector: {selector}")
+                    break
             except Exception:
-                # Didn't detect a change in time - fall through to the
-                # plain visibility wait below rather than failing outright.
+                continue
+
+        # If a child result element was found, use its nearest result card
+        # where possible so the existing parsing code can continue.
+        if result_container is not None and result_selector != 'div[data-test="container"]':
+            try:
+                parent = result_container.locator(
+                    'xpath=ancestor::div[@data-test="container"][1]'
+                )
+                if parent.count() and parent.first.is_visible():
+                    result_container = parent.first
+                    print("[INFO] Using nearest legacy container result card.")
+            except Exception:
                 pass
 
-        result_container.wait_for(
-            state="visible",
-            timeout=30000
-        )
+        if result_container is None:
+            body_text = ""
+            try:
+                body_text = page.locator("body").inner_text(timeout=5000)
+            except Exception:
+                pass
+
+            # Save both a screenshot and rendered DOM to diagnose selector
+            # changes, validation errors, consent screens, or bot challenges.
+            try:
+                page.screenshot(path="maersk_timeout.png", full_page=True)
+                with open("maersk_timeout.html", "w", encoding="utf-8") as html_file:
+                    html_file.write(page.content())
+                print(
+                    "[INFO] Saved maersk_timeout.png and maersk_timeout.html "
+                    "for selector diagnosis."
+                )
+            except Exception as diagnostic_error:
+                print(f"[WARN] Could not save Maersk diagnostics: {diagnostic_error}")
+
+            lowered = body_text.lower()
+
+            if any(message in lowered for message in (
+                "no results",
+                "not found",
+                "couldn't find",
+                "could not find",
+            )):
+                raise ContainerNotFoundError(
+                    "No tracking data found for this container number on Maersk."
+                )
+
+            if any(message in lowered for message in (
+                "verify you are human",
+                "captcha",
+                "access denied",
+                "unusual traffic",
+            )):
+                raise RuntimeError(
+                    "Maersk displayed a verification or access-block page; "
+                    "the scraper cannot continue until that page is resolved."
+                )
+
+            print(
+                f"[ERROR] Maersk result not shown. URL: {page.url}. "
+                f"Page text: {body_text[:1000]!r}"
+            )
+            raise RuntimeError(
+                "Maersk did not display a recognizable tracking result. "
+                "Inspect maersk_timeout.png and maersk_timeout.html; "
+                "the current page may use different result selectors."
+            )
 
         # ========================================================
         # CONTAINER INFORMATION
