@@ -10,6 +10,8 @@ move, not its full movement history (Evergreen requires a Bill of Lading
 number for that).
 """
 
+import re
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -50,15 +52,18 @@ def track_container(raw_container_number: str) -> dict:
         raise ContainerNotFoundError("No tracking data found for this container number on Evergreen.")
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    table = soup.find("table", class_="ec-table")
-    if table is None:
+    # The page can contain several `ec-table` tables (B/L vessel voyage, ETA,
+    # then the container table), so look for event rows in all of them.
+    tables = soup.find_all("table", class_="ec-table")
+    if not tables:
         raise ContainerNotFoundError("No tracking data found for this container number on Evergreen.")
 
     rows = []
-    for tr in table.find_all("tr")[1:]:  # skip header row
-        cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
-        if len(cells) == len(EVENT_COLUMNS):
-            rows.append(cells)
+    for table in tables:
+        for tr in table.find_all("tr"):
+            cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+            if len(cells) == len(EVENT_COLUMNS):
+                rows.append(cells)
 
     if not rows:
         raise ContainerNotFoundError("No tracking data found for this container number on Evergreen.")
@@ -68,6 +73,10 @@ def track_container(raw_container_number: str) -> dict:
         for label, value in zip(EVENT_COLUMNS[1:], rows[0][1:])
         if value
     ]
+
+    eta_match = re.search(r"Estimated Date of Arrival\s*:\s*([A-Z]{3}-\d{2}-\d{4})", soup.get_text(" ", strip=True))
+    if eta_match:
+        summary_fields.append({"label": "Estimated Arrival", "value": eta_match.group(1)})
 
     return {
         "line": "evergreen",
